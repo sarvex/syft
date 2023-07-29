@@ -68,7 +68,6 @@ def eval_marker(value):
         ),
     }
     return bool(eval(value, variables, variables))
-    return True
 def _opt_value(cfg, into, section, key, transform = None):
     try:
         v = cfg.get(section, key)
@@ -78,10 +77,7 @@ def _opt_value(cfg, into, section, key, transform = None):
                 return
             v = v.strip()
         if v:
-            if transform:
-                into[key] = transform(v.strip())
-            else:
-                into[key] = v.strip()
+            into[key] = transform(v.strip()) if transform else v.strip()
     except (NoOptionError, NoSectionError):
         pass
 def _as_bool(value):
@@ -102,30 +98,27 @@ def _as_lines(value):
             v, marker = v.rsplit(';', 1)
             if not eval_marker(marker):
                 continue
-            v = v.strip()
-            if v:
+            if v := v.strip():
                 result.append(v)
         else:
             result.append(v)
     return result
 def _map_requirement(value):
     m = re.search(r'(\S+)\s*(?:\((.*)\))?', value)
-    name = m.group(1)
-    version = m.group(2)
+    name = m[1]
+    version = m[2]
     if version is None:
         return name
-    else:
-        mapped = []
-        for v in version.split(','):
-            v = v.strip()
-            if v[0].isdigit():
-                # Checks for a specific version prefix
-                m = v.rsplit('.', 1)
-                mapped.append('>=%s,<%s.%s'%(
-                    v, m[0], int(m[1])+1))
-            else:
-                mapped.append(v)
-        return '%s %s'%(name, ','.join(mapped),)
+    mapped = []
+    for v in version.split(','):
+        v = v.strip()
+        if v[0].isdigit():
+            # Checks for a specific version prefix
+            m = v.rsplit('.', 1)
+            mapped.append(f'>={v},<{m[0]}.{int(m[1]) + 1}')
+        else:
+            mapped.append(v)
+    return f"{name} {','.join(mapped)}"
 def _as_requires(value):
     requires = []
     for req in value.splitlines():
@@ -165,16 +158,14 @@ def parse_setup_cfg():
     except (NoOptionError, NoSectionError):
         pass
     else:
-        requires = _as_requires(v)
-        if requires:
+        if requires := _as_requires(v):
             metadata['install_requires'] = requires
     try:
         v = cfg.get('metadata', 'requires-test')
     except (NoOptionError, NoSectionError):
         pass
     else:
-        requires = _as_requires(v)
-        if requires:
+        if requires := _as_requires(v):
             metadata['tests_require'] = requires
     try:
         v = cfg.get('metadata', 'long_description_file')
@@ -183,9 +174,8 @@ def parse_setup_cfg():
     else:
         parts = []
         for nm in v.split():
-            fp = open(nm, 'rU')
-            parts.append(fp.read())
-            fp.close()
+            with open(nm, 'rU') as fp:
+                parts.append(fp.read())
         metadata['long_description'] = '\n\n'.join(parts)
     try:
         v = cfg.get('metadata', 'zip-safe')
@@ -224,14 +214,12 @@ try:
 except ImportError:
     def _python_cmd(*args):
         args = (sys.executable,) + args
-        new_args = []
-        for a in args:
-            new_args.append(a.replace("'", "'\"'\"'"))
+        new_args = [a.replace("'", "'\"'\"'") for a in args]
         os.system(' '.join(new_args)) == 0
 try:
     import json
     def get_pypi_src_download(package):
-        url = 'https://pypi.python.org/pypi/%s/json'%(package,)
+        url = f'https://pypi.python.org/pypi/{package}/json'
         fp = urllib.urlopen(url)
         try:
             try:
@@ -239,20 +227,20 @@ try:
             finally:
                 fp.close()
         except urllib.error:
-            raise RuntimeError("Cannot determine download link for %s"%(package,))
+            raise RuntimeError(f"Cannot determine download link for {package}")
         pkgdata = json.loads(data.decode('utf-8'))
         if 'urls' not in pkgdata:
-            raise RuntimeError("Cannot determine download link for %s"%(package,))
+            raise RuntimeError(f"Cannot determine download link for {package}")
         for info in pkgdata['urls']:
             if info['packagetype'] == 'sdist' and info['url'].endswith('tar.gz'):
                 return (info.get('md5_digest'), info['url'])
-        raise RuntimeError("Cannot determine downlink link for %s"%(package,))
+        raise RuntimeError(f"Cannot determine downlink link for {package}")
 except ImportError:
     # Python 2.5 compatibility, no JSON in stdlib but luckily JSON syntax is
     # simular enough to Python's syntax to be able to abuse the Python compiler
     import _ast as ast
     def get_pypi_src_download(package):
-        url = 'https://pypi.python.org/pypi/%s/json'%(package,)
+        url = f'https://pypi.python.org/pypi/{package}/json'
         fp = urllib.urlopen(url)
         try:
             try:
@@ -260,48 +248,50 @@ except ImportError:
             finally:
                 fp.close()
         except urllib.error:
-            raise RuntimeError("Cannot determine download link for %s"%(package,))
+            raise RuntimeError(f"Cannot determine download link for {package}")
         a = compile(data, '-', 'eval', ast.PyCF_ONLY_AST)
         if not isinstance(a, ast.Expression):
-            raise RuntimeError("Cannot determine download link for %s"%(package,))
+            raise RuntimeError(f"Cannot determine download link for {package}")
         a = a.body
         if not isinstance(a, ast.Dict):
-            raise RuntimeError("Cannot determine download link for %s"%(package,))
+            raise RuntimeError(f"Cannot determine download link for {package}")
         for k, v in zip(a.keys, a.values):
             if not isinstance(k, ast.Str):
-                raise RuntimeError("Cannot determine download link for %s"%(package,))
+                raise RuntimeError(f"Cannot determine download link for {package}")
             k = k.s
             if k == 'urls':
                 a = v
                 break
         else:
-            raise RuntimeError("PyPI JSON for %s doesn't contain URLs section"%(package,))
+            raise RuntimeError(f"PyPI JSON for {package} doesn't contain URLs section")
         if not isinstance(a, ast.List):
-            raise RuntimeError("Cannot determine download link for %s"%(package,))
+            raise RuntimeError(f"Cannot determine download link for {package}")
         for info in v.elts:
             if not isinstance(info, ast.Dict):
-                raise RuntimeError("Cannot determine download link for %s"%(package,))
+                raise RuntimeError(f"Cannot determine download link for {package}")
             url = None
             packagetype = None
             chksum = None
             for k, v in zip(info.keys, info.values):
                 if not isinstance(k, ast.Str):
-                    raise RuntimeError("Cannot determine download link for %s"%(package,))
-                if k.s == 'url':
-                    if not isinstance(v, ast.Str):
-                        raise RuntimeError("Cannot determine download link for %s"%(package,))
-                    url = v.s
-                elif k.s == 'packagetype':
-                    if not isinstance(v, ast.Str):
-                        raise RuntimeError("Cannot determine download link for %s"%(package,))
-                    packagetype = v.s
-                elif k.s == 'md5_digest':
-                    if not isinstance(v, ast.Str):
-                        raise RuntimeError("Cannot determine download link for %s"%(package,))
+                    raise RuntimeError(f"Cannot determine download link for {package}")
+                if k.s == 'md5_digest' and isinstance(v, ast.Str):
                     chksum = v.s
+                elif (
+                    k.s == 'md5_digest'
+                    or k.s == 'packagetype'
+                    and not isinstance(v, ast.Str)
+                ):
+                    raise RuntimeError(f"Cannot determine download link for {package}")
+                elif k.s == 'packagetype':
+                    packagetype = v.s
+                elif k.s == 'url':
+                    if not isinstance(v, ast.Str):
+                        raise RuntimeError(f"Cannot determine download link for {package}")
+                    url = v.s
             if url is not None and packagetype == 'sdist' and url.endswith('.tar.gz'):
                 return (chksum, url)
-        raise RuntimeError("Cannot determine download link for %s"%(package,))
+        raise RuntimeError(f"Cannot determine download link for {package}")
 def _build_egg(egg, tarball, to_dir):
     # extracting the tarball
     tmpdir = tempfile.mkdtemp()
@@ -359,7 +349,7 @@ def download_setuptools(packagename, to_dir):
             if chksum is not None:
                 data_sum = md5(data).hexdigest()
                 if data_sum != chksum:
-                    raise RuntimeError("Downloading %s failed: corrupt checksum"%(url,))
+                    raise RuntimeError(f"Downloading {url} failed: corrupt checksum")
             dst = open(saveto, "wb")
             dst.write(data)
         finally:
@@ -408,7 +398,7 @@ def _extractall(self, path=".", members=None):
             if self.errorlevel > 1:
                 raise
             else:
-                self._dbg(1, "tarfile: %s" % e)
+                self._dbg(1, f"tarfile: {e}")
 #
 #
 #
@@ -477,35 +467,35 @@ else:
             # Collect sphinx output
             if not os.path.exists('dist'):
                 os.mkdir('dist')
-            zf = zipfile.ZipFile('dist/%s-docs.zip'%(name,), 'w',
-                    compression=zipfile.ZIP_DEFLATED)
+            zf = zipfile.ZipFile(
+                f'dist/{name}-docs.zip', 'w', compression=zipfile.ZIP_DEFLATED
+            )
             for toplevel, dirs, files in os.walk('doc/_build/html'):
                 for fn in files:
                     fullname = os.path.join(toplevel, fn)
                     relname = os.path.relpath(fullname, 'doc/_build/html')
-                    print ("%s -> %s"%(fullname, relname))
+                    print(f"{fullname} -> {relname}")
                     zf.write(fullname, relname)
             zf.close()
             # Upload the results, this code is based on the distutils
             # 'upload' command.
-            content = open('dist/%s-docs.zip'%(name,), 'rb').read()
+            content = open(f'dist/{name}-docs.zip', 'rb').read()
             data = {
                 ':action': 'doc_upload',
                 'name': name,
-                'content': ('%s-docs.zip'%(name,), content),
+                'content': (f'{name}-docs.zip', content),
             }
-            auth = "Basic " + standard_b64encode(self.username + ":" +
-                 self.password)
+            auth = f'Basic {standard_b64encode(f"{self.username}:{self.password}")}'
             boundary = '--------------GHSKFJDLGDS7543FJKLFHRE75642756743254'
             sep_boundary = '\n--' + boundary
-            end_boundary = sep_boundary + '--'
+            end_boundary = f'{sep_boundary}--'
             body = StringIO.StringIO()
             for key, value in data.items():
                 if not isinstance(value, list):
                     value = [value]
                 for value in value:
                     if isinstance(value, tuple):
-                        fn = ';filename="%s"'%(value[0])
+                        fn = f';filename="{value[0]}"'
                         value = value[1]
                     else:
                         fn = ''
@@ -517,22 +507,21 @@ else:
             body.write(end_boundary)
             body.write('\n')
             body = body.getvalue()
-            self.announce("Uploading documentation to %s"%(self.repository,), log.INFO)
+            self.announce(f"Uploading documentation to {self.repository}", log.INFO)
             schema, netloc, url, params, query, fragments = \
-                    urlparse.urlparse(self.repository)
+                            urlparse.urlparse(self.repository)
             if schema == 'http':
                 http = httplib.HTTPConnection(netloc)
             elif schema == 'https':
                 http = httplib.HTTPSConnection(netloc)
             else:
-                raise AssertionError("unsupported schema "+schema)
+                raise AssertionError(f"unsupported schema {schema}")
             data = ''
             loglevel = log.INFO
             try:
                 http.connect()
                 http.putrequest("POST", url)
-                http.putheader('Content-type',
-                    'multipart/form-data; boundary=%s'%boundary)
+                http.putheader('Content-type', f'multipart/form-data; boundary={boundary}')
                 http.putheader('Content-length', str(len(body)))
                 http.putheader('Authorization', auth)
                 http.endheaders()
@@ -543,11 +532,9 @@ else:
                 return
             r = http.getresponse()
             if r.status in (200, 301):
-                self.announce('Upload succeeded (%s): %s' % (r.status, r.reason),
-                    log.INFO)
+                self.announce(f'Upload succeeded ({r.status}): {r.reason}', log.INFO)
             else:
-                self.announce('Upload failed (%s): %s' % (r.status, r.reason),
-                    log.ERROR)
+                self.announce(f'Upload failed ({r.status}): {r.reason}', log.ERROR)
                 print ('-'*75)
                 print (r.read())
                 print ('-'*75)
@@ -558,9 +545,11 @@ def recursiveGlob(root, pathPattern):
     """
     result = []
     for rootpath, dirnames, filenames in os.walk(root):
-        for fn in filenames:
-            if fnmatch(fn, pathPattern):
-                result.append(os.path.join(rootpath, fn))
+        result.extend(
+            os.path.join(rootpath, fn)
+            for fn in filenames
+            if fnmatch(fn, pathPattern)
+        )
     return result
 def importExternalTestCases(unittest,
         pathPattern="test_*.py", root=".", package=None):
@@ -570,13 +559,13 @@ def importExternalTestCases(unittest,
     testFiles = recursiveGlob(root, pathPattern)
     testModules = map(lambda x:x[len(root)+1:-3].replace('/', '.'), testFiles)
     if package is not None:
-        testModules = [(package + '.' + m) for m in testModules]
+        testModules = [f'{package}.{m}' for m in testModules]
     suites = []
     for modName in testModules:
         try:
             module = __import__(modName)
         except ImportError:
-            print("SKIP %s: %s"%(modName, sys.exc_info()[1]))
+            print(f"SKIP {modName}: {sys.exc_info()[1]}")
             continue
         if '.' in modName:
             for elem in modName.split('.')[1:]:
@@ -600,7 +589,7 @@ class test (Command):
         to_remove =  []
         for dirname in sys.path:
             bn = os.path.basename(dirname)
-            if bn.startswith(egg_name + "-"):
+            if bn.startswith(f"{egg_name}-"):
                 to_remove.append(dirname)
         for dirname in to_remove:
             log.info("removing installed %r from sys.path before testing"%(
@@ -631,7 +620,7 @@ class test (Command):
         # Reset pkg_resources state:
         add_activation_listener(lambda dist: dist.activate())
         working_set.__init__()
-        require('%s==%s'%(ei_cmd.egg_name, ei_cmd.egg_version))
+        require(f'{ei_cmd.egg_name}=={ei_cmd.egg_version}')
     def remove_from_sys_path(self):
         from pkg_resources import working_set
         sys.path[:] = self.__old_path
@@ -646,7 +635,7 @@ class test (Command):
         try:
             meta = self.distribution.metadata
             name = meta.get_name()
-            test_pkg = name + "_tests"
+            test_pkg = f"{name}_tests"
             suite = importExternalTestCases(unittest,
                     "test_*.py", test_pkg, test_pkg)
             runner = unittest.TextTestRunner(verbosity=self.verbosity)
@@ -661,7 +650,7 @@ class test (Command):
                 xpass=len(getattr(result, 'expectedSuccesses', [])),
                 skip=len(getattr(result, 'skipped', [])),
             )
-            print("SUMMARY: %s"%(summary,))
+            print(f"SUMMARY: {summary}")
         finally:
             self.remove_from_sys_path()
 #
